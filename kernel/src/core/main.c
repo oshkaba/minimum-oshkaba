@@ -1,9 +1,13 @@
 #include "minemu/boot.h"
-#include "minemu/console.h"
+#include "minemu/irq.h"
+#include "minemu/msh.h"
+#include "minemu/platform.h"
 #include "minemu/trap.h"
 #include "minemu/trace.h"
+#include "minemu/uart.h"
 
-void minemu_kernel_main(const struct minemu_boot_info *boot_info) {
+void minemu_kernel_main(const struct minemu_boot_info *boot_info)
+{
     if ((uintptr_t)boot_info != MINEMU_BOOT_INFO_VADDR ||
         boot_info->magic != MINEMU_BOOT_INFO_MAGIC ||
         boot_info->version != MINEMU_ABI_VERSION ||
@@ -16,8 +20,14 @@ void minemu_kernel_main(const struct minemu_boot_info *boot_info) {
         minemu_fail_stop();
     }
 
-    minemu_console_printf("hello world\n");
+    minemu_uart_rx_init();
 
-    minemu_trace_event(1);
+    MINEMU_INTERRUPT->enable =
+        UINT32_C(1) << MINEMU_IRQ_UART0;
+
+    minemu_irq_enable();
+
+    minemu_msh_run();
+
     minemu_fail_stop();
 }
