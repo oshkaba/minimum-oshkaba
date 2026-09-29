@@ -12,6 +12,7 @@ RUNTIME_OBJECTS := \
 	$(BUILD)/runtime/console.o \
 	$(BUILD)/runtime/exception.o \
 	$(BUILD)/runtime/memory.o \
+	$(BUILD)/runtime/msh.o \
 	$(BUILD)/runtime/trace.o \
 	$(BUILD)/runtime/uart.o \
 	$(BUILD)/startup/boot.o \
