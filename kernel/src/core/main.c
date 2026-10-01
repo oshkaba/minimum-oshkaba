@@ -1,5 +1,4 @@
 #include "minemu/boot.h"
-#include "minemu/console.h"
 #include "minemu/irq.h"
 #include "minemu/msh.h"
 #include "minemu/platform.h"
@@ -20,8 +19,6 @@ void minemu_kernel_main(const struct minemu_boot_info *boot_info)
         minemu_trace_event(UINT32_C(0xb007bad0));
         minemu_fail_stop();
     }
-
-    minemu_console_write("hello world\n");
 
     minemu_uart_rx_init();
 
