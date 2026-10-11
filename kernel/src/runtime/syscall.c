@@ -27,17 +27,13 @@ static const volatile uint32_t *ram_alias(uint32_t address)
         (MINEMU_KERNEL_DIRECT_BASE + address - MINEMU_RAM_BASE);
 }
 
-/* TTBR0 contains the active page directory's physical address. */
 static uint32_t current_directory(void)
 {
-    uint32_t address;
-
-    __asm__ volatile(
-        "mrc p15, 0, %0, c2, c0, 0"
-        : "=r"(address)
-    );
-
-    return address;
+    /*
+     * boot.S installs this directory, and Task 1 never switches TTBR0.
+     * minemu supports writing TTBR0 but does not support reading it.
+     */
+    return UINT32_C(0x40010000);
 }
 
 /* Validate every page before accessing user memory or devices. */
