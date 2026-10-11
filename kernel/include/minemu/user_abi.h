@@ -11,18 +11,32 @@
 #define MINEMU_SYSCALL_PTHREAD_EXIT 8
 #define MINEMU_SYSCALL_SCHED_YIELD 9
 
-#define MINEMU_FD_UART_IN 0
-#define MINEMU_FD_UART_OUT 1
-#define MINEMU_FD_UART_DIAG 2
-#define MINEMU_FD_RNG 3
-#define MINEMU_FD_TRACE 4
+/* Required assignment device selectors. */
+#define MINEMU_FD_UART0        0x10004000
+#define MINEMU_FD_UART1        0x10005000
+#define MINEMU_FD_RNG_DEVICE   0x10003000
+#define MINEMU_FD_TRACE_DEVICE 0x1000f000
 
-#define MINEMU_IOCTL_UART_READ 0x00000101
-#define MINEMU_IOCTL_UART_WRITE 0x00000102
+/* Required assignment operations, interpreted per device. */
+#define MINEMU_OP_UART_READ    0
+#define MINEMU_OP_UART_WRITE   1
+#define MINEMU_OP_RNG_SET_SEED 0
+#define MINEMU_OP_RNG_GET_DATA 1
+#define MINEMU_OP_TRACE_EVENT  0
+
+/* Existing repository interface, preserved for the supplied tests. */
+#define MINEMU_FD_UART_IN   0
+#define MINEMU_FD_UART_OUT  1
+#define MINEMU_FD_UART_DIAG 2
+#define MINEMU_FD_RNG      3
+#define MINEMU_FD_TRACE    4
+
+#define MINEMU_IOCTL_UART_READ   0x00000101
+#define MINEMU_IOCTL_UART_WRITE  0x00000102
 #define MINEMU_IOCTL_UART_STATUS 0x00000103
-#define MINEMU_IOCTL_RNG_NEXT 0x00000201
-#define MINEMU_IOCTL_RNG_STATE 0x00000202
-#define MINEMU_IOCTL_RNG_SEED 0x00000203
+#define MINEMU_IOCTL_RNG_NEXT    0x00000201
+#define MINEMU_IOCTL_RNG_STATE   0x00000202
+#define MINEMU_IOCTL_RNG_SEED    0x00000203
 #define MINEMU_IOCTL_TRACE_EVENT 0x00000301
 
 #define MINEMU_IOCTL_UART_RX_READY 1
@@ -31,6 +45,7 @@
 #define MINEMU_IOCTL_ERROR (-1)
 
 #ifndef __ASSEMBLER__
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -38,19 +53,25 @@
 typedef int32_t pid_t;
 #define MINIMUM_PID_T_DEFINED
 #endif
+
 typedef uint32_t pthread_t;
 
-/* UART buffer arguments use the exact variadic type void *. */
-int32_t ioctl(int fd, uint32_t request, ...);
+
+int ioctl(int fd, int op, ...);
+
 pid_t fork(void);
 int exec(const char *module_name);
 pid_t wait(pid_t pid, int *status);
 _Noreturn void _exit(int status);
-int pthread_create(pthread_t *thread, void *(*start_routine)(void *),
+
+int pthread_create(pthread_t *thread,
+                   void *(*start_routine)(void *),
                    void *argument);
 int pthread_join(pthread_t thread, void **return_value);
 _Noreturn void pthread_exit(void *return_value);
+
 int sched_yield(void);
+
 #endif
 
 #endif
