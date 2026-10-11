@@ -13,11 +13,13 @@ RUNTIME_OBJECTS := \
 	$(BUILD)/runtime/console.o \
 	$(BUILD)/runtime/exception.o \
 	$(BUILD)/runtime/memory.o \
+	$(BUILD)/runtime/page_alloc.o \
 	$(BUILD)/runtime/msh.o \
 	$(BUILD)/runtime/trace.o \
 	$(BUILD)/runtime/uart.o \
 	$(BUILD)/startup/boot.o \
 	$(BUILD)/startup/vectors.o
+	
 
 # Link the Task 1 implementations directly into the kernel.
 TASK1_OBJECTS := \

@@ -4,17 +4,16 @@
 
 #include "minemu/boot.h"
 #include "minemu/mmu.h"
+#include "minemu/page_alloc.h"
 #include "minemu/platform.h"
 #include "minemu/trace.h"
 #include "minemu/trap.h"
 
 #define BOOTSTRAP_PAGE_DIRECTORY_PADDR UINT32_C(0x40010000)
-
 #define USER_IMAGE_BASE UINT32_C(0x00400000)
 #define USER_STACK_BOTTOM UINT32_C(0x007ff000)
 #define USER_STACK_TOP UINT32_C(0x00800000)
-
-#define MAX_USER_IMAGE_PAGES 16U
+#define MAX_USER_IMAGE_PAGES 64U
 #define SYSTEM_ROM_TABLE_COUNT 4U
 
 static uint32_t system_rom_tables[SYSTEM_ROM_TABLE_COUNT][1024]
@@ -23,12 +22,7 @@ static uint32_t system_rom_tables[SYSTEM_ROM_TABLE_COUNT][1024]
 static uint32_t user_page_table[1024]
     __attribute__((aligned(MINEMU_PAGE_SIZE)));
 
-static uint8_t user_image_pages[MAX_USER_IMAGE_PAGES][MINEMU_PAGE_SIZE]
-    __attribute__((aligned(MINEMU_PAGE_SIZE)));
-
-static uint8_t user_stack[MINEMU_PAGE_SIZE]
-    __attribute__((aligned(MINEMU_PAGE_SIZE)));
-
+static uint32_t user_page_paddrs[MAX_USER_IMAGE_PAGES];
 static uint32_t user_page_vaddrs[MAX_USER_IMAGE_PAGES];
 static uint32_t user_page_flags[MAX_USER_IMAGE_PAGES];
 static size_t user_page_count;
@@ -37,10 +31,7 @@ void minemu_enter_user(uint32_t entry_vaddr, uint32_t stack_top)
     __attribute__((noreturn));
 
 static void disable_task1_interrupts(void) {
-    /*
-     * user.S restores CPSR = 0x10, which unmasks IRQ and FIQ.
-     * Disable interrupt sources before entering user mode.
-     */
+    /* user.S restores CPSR = 0x10, so disable sources before entering USR. */
     __asm__ volatile("cpsid if" : : : "memory");
 
     MINEMU_INTERRUPT->enable = 0;
@@ -58,8 +49,7 @@ static void zero_bytes(void *destination, size_t length) {
     }
 }
 
-static void copy_bytes(void *destination, const void *source,
-                       size_t length) {
+static void copy_bytes(void *destination, const void *source, size_t length) {
     uint8_t *out = destination;
     const uint8_t *in = source;
 
@@ -68,8 +58,7 @@ static void copy_bytes(void *destination, const void *source,
     }
 }
 
-static bool bytes_equal(const uint8_t *left, const char *right,
-                        size_t length) {
+static bool bytes_equal(const uint8_t *left, const char *right, size_t length) {
     for (size_t index = 0; index < length; ++index) {
         if (left[index] != (uint8_t)right[index]) {
             return false;
@@ -86,7 +75,6 @@ static bool image_range_valid(uint32_t offset, uint32_t length,
 
 static bool image_records_valid(uint32_t offset, uint32_t count,
                                 uint32_t image_size) {
-    /* Module and segment records are both 32 bytes. */
     return offset <= image_size &&
            count <= ((image_size - offset) >> 5);
 }
@@ -94,6 +82,11 @@ static bool image_records_valid(uint32_t offset, uint32_t count,
 static uint32_t kernel_vaddr_to_paddr(const void *address) {
     return (uint32_t)(uintptr_t)address -
            MINEMU_KERNEL_DIRECT_BASE + MINEMU_RAM_BASE;
+}
+
+static uint8_t *physical_page_pointer(uint32_t paddr) {
+    return (uint8_t *)(uintptr_t)(
+        MINEMU_KERNEL_DIRECT_BASE + (paddr - MINEMU_RAM_BASE));
 }
 
 static volatile uint32_t *active_page_directory(void) {
@@ -132,10 +125,8 @@ static bool map_system_rom(const struct minemu_boot_info *boot_info) {
             uint32_t page = table * 1024U + index;
 
             system_rom_tables[table][index] =
-                (boot_info->system_rom_base +
-                 page * MINEMU_PAGE_SIZE) |
-                MINEMU_PTE_VALID |
-                MINEMU_PTE_READABLE;
+                (boot_info->system_rom_base + page * MINEMU_PAGE_SIZE) |
+                MINEMU_PTE_VALID | MINEMU_PTE_READABLE;
         }
 
         uint32_t directory_index =
@@ -169,9 +160,7 @@ static const struct minemu_module_record *find_module(
         (const struct minemu_module_record *)(
             image + boot_info->module_table_offset);
 
-    for (uint32_t index = 0;
-         index < boot_info->module_count;
-         ++index) {
+    for (uint32_t index = 0; index < boot_info->module_count; ++index) {
         const struct minemu_module_record *module = &modules[index];
 
         if (module->name_length == name_length &&
@@ -209,10 +198,6 @@ static int user_page_index(uint32_t page_vaddr, uint32_t flags,
                            bool create) {
     for (size_t index = 0; index < user_page_count; ++index) {
         if (user_page_vaddrs[index] == page_vaddr) {
-            /*
-             * A page has one set of permissions. Reject segments
-             * requesting different permissions for the same page.
-             */
             if (create && user_page_flags[index] != flags) {
                 return -1;
             }
@@ -225,11 +210,17 @@ static int user_page_index(uint32_t page_vaddr, uint32_t flags,
         return -1;
     }
 
+    uint32_t paddr = minemu_page_alloc();
+
+    if (paddr == 0) {
+        return -1;
+    }
+
     size_t index = user_page_count++;
 
+    user_page_paddrs[index] = paddr;
     user_page_vaddrs[index] = page_vaddr;
     user_page_flags[index] = flags;
-    zero_bytes(user_image_pages[index], MINEMU_PAGE_SIZE);
 
     return (int)index;
 }
@@ -267,14 +258,12 @@ static bool write_user_range(uint32_t vaddr, const uint8_t *source,
             chunk = length;
         }
 
-        if (source == NULL) {
-            zero_bytes(&user_image_pages[index][offset], chunk);
-        } else {
-            copy_bytes(&user_image_pages[index][offset],
-                       source, chunk);
-            source += chunk;
-        }
+        uint8_t *destination =
+            physical_page_pointer(user_page_paddrs[index]);
 
+        copy_bytes(destination + offset, source, chunk);
+
+        source += chunk;
         vaddr += chunk;
         length -= chunk;
     }
@@ -305,15 +294,12 @@ static bool load_user_module(
     bool entry_is_executable = false;
 
     zero_bytes(user_page_table, sizeof(user_page_table));
-    zero_bytes(user_stack, sizeof(user_stack));
     user_page_count = 0;
 
-    for (uint32_t index = 0;
-         index < module->segment_count;
-         ++index) {
+    for (uint32_t index = 0; index < module->segment_count; ++index) {
         const struct minemu_module_segment *segment = &segments[index];
 
-        /* A linker may produce an empty data segment. */
+        /* Linkers may emit an empty data PT_LOAD for a text-only fixture. */
         if (segment->memory_size == 0) {
             if (segment->file_size != 0) {
                 return false;
@@ -339,14 +325,13 @@ static bool load_user_module(
             return false;
         }
 
-        /* Additional protection: reject writable executable segments. */
+        /* Reject overlapping byte ranges and writable executable segments. */
         if ((segment->flags &
              (MINEMU_SEGMENT_WRITABLE | MINEMU_SEGMENT_EXECUTABLE)) ==
             (MINEMU_SEGMENT_WRITABLE | MINEMU_SEGMENT_EXECUTABLE)) {
             return false;
         }
 
-        /* Reject overlapping segment byte ranges. */
         for (uint32_t previous = 0; previous < index; ++previous) {
             const struct minemu_module_segment *other =
                 &segments[previous];
@@ -360,28 +345,18 @@ static bool load_user_module(
             }
         }
 
-        uint32_t pte_flags =
-            pte_flags_from_segment(segment->flags);
+        uint32_t pte_flags = pte_flags_from_segment(segment->flags);
 
-        /*
-         * Allocate backing pages, zero the full memory extent,
-         * then copy the file-backed bytes.
-         */
+        /* Allocation already clears each page; uncopied BSS stays zero. */
         if (!prepare_user_range(segment->virtual_address,
                                 segment->memory_size,
                                 pte_flags) ||
-            !write_user_range(segment->virtual_address,
-                              NULL, segment->memory_size) ||
             !write_user_range(segment->virtual_address,
                               image + segment->data_offset,
                               segment->file_size)) {
             return false;
         }
 
-        /*
-         * Require a complete A32 instruction at the entry point
-         * inside an executable, file-backed segment.
-         */
         if ((segment->flags & MINEMU_SEGMENT_EXECUTABLE) != 0 &&
             segment->file_size >= 4U &&
             module->entry_vaddr >= segment->virtual_address &&
@@ -395,20 +370,25 @@ static bool load_user_module(
         return false;
     }
 
+    uint32_t stack_paddr = minemu_page_alloc();
+
+    if (stack_paddr == 0) {
+        return false;
+    }
+
     for (size_t index = 0; index < user_page_count; ++index) {
         uint32_t table_index =
             (user_page_vaddrs[index] >> 12) & 1023U;
 
         user_page_table[table_index] =
-            kernel_vaddr_to_paddr(user_image_pages[index]) |
+            user_page_paddrs[index] |
             MINEMU_PTE_VALID |
             MINEMU_PTE_USER |
             user_page_flags[index];
     }
 
-    /* User stack: readable and writable, without execute permission. */
     user_page_table[(USER_STACK_BOTTOM >> 12) & 1023U] =
-        kernel_vaddr_to_paddr(user_stack) |
+        stack_paddr |
         MINEMU_PTE_VALID |
         MINEMU_PTE_USER |
         MINEMU_PTE_READABLE |
@@ -436,6 +416,7 @@ void minemu_kernel_main(const struct minemu_boot_info *boot_info) {
         boot_info->direct_map_vaddr != MINEMU_KERNEL_DIRECT_BASE ||
         boot_info->direct_map_paddr != MINEMU_RAM_BASE ||
         boot_info->direct_map_size != MINEMU_KERNEL_DIRECT_SIZE ||
+        !minemu_page_allocator_init() ||
         !map_system_rom(boot_info)) {
         minemu_trace_event(UINT32_C(0x48454c01));
         minemu_fail_stop();

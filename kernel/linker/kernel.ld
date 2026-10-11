@@ -48,16 +48,30 @@ SECTIONS
   {
     . += 4096;
     __minemu_svc_stack_top = .;
+
     . += 4096;
     __minemu_irq_stack_top = .;
+
     . += 4096;
     __minemu_abt_stack_top = .;
+
     . += 4096;
     __minemu_und_stack_top = .;
   } :kernel
 
-  __minemu_svc_stack_top_paddr = __minemu_svc_stack_top - 0x80000000;
-  __minemu_irq_stack_top_paddr = __minemu_irq_stack_top - 0x80000000;
-  __minemu_abt_stack_top_paddr = __minemu_abt_stack_top - 0x80000000;
-  __minemu_und_stack_top_paddr = __minemu_und_stack_top - 0x80000000;
+  /* Physical-page allocation starts after kernel storage and stacks. */
+  . = ALIGN(4096);
+  __minemu_kernel_end = .;
+
+  __minemu_svc_stack_top_paddr =
+      __minemu_svc_stack_top - 0x80000000;
+
+  __minemu_irq_stack_top_paddr =
+      __minemu_irq_stack_top - 0x80000000;
+
+  __minemu_abt_stack_top_paddr =
+      __minemu_abt_stack_top - 0x80000000;
+
+  __minemu_und_stack_top_paddr =
+      __minemu_und_stack_top - 0x80000000;
 }
