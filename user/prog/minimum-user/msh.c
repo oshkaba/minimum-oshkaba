@@ -3,7 +3,7 @@
 #include "minemu/user_abi.h"
 #include "msh.h"
 
-#define MINEMU_MSH_LINE_MAX 20U
+#define MINEMU_MSH_LINE_MAX 25U
 
 static void msh_io_failure(void)
 {
